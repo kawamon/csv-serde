@@ -14,6 +14,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.serde.Constants;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.SerDeException;
+import org.apache.hadoop.hive.serde2.SerDeStats;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
@@ -44,7 +45,11 @@ public final class CSVSerde implements SerDe {
   private char separatorChar;
   private char quoteChar;
   private char escapeChar;
-  
+
+  private SerDeStats stats;
+  private long deserializedDataSize;
+  private long serializedDataSize;
+  private boolean lastOperationSerialize;
     
   @Override
   public void initialize(final Configuration conf, final Properties tbl) throws SerDeException {
@@ -70,6 +75,8 @@ public final class CSVSerde implements SerDe {
     separatorChar = getProperty(tbl, "separatorChar", CSVWriter.DEFAULT_SEPARATOR);
     quoteChar = getProperty(tbl, "quoteChar", CSVWriter.DEFAULT_QUOTE_CHARACTER);
     escapeChar = getProperty(tbl, "escapeChar", CSVWriter.DEFAULT_ESCAPE_CHARACTER);
+
+    stats = new SerDeStats();
   }
   
   private final char getProperty(final Properties tbl, final String property, final char def) {
@@ -111,8 +118,12 @@ public final class CSVSerde implements SerDe {
     try {
       csv.writeNext(outputFields);
       csv.close();
-      
-      return new Text(writer.toString());
+
+      Text serialized = new Text(writer.toString());
+      serializedDataSize = serialized.getBytes().length;
+      lastOperationSerialize = true;
+
+      return serialized;
     } catch (final IOException ioe) {
       throw new SerDeException(ioe);
     }
@@ -134,6 +145,9 @@ public final class CSVSerde implements SerDe {
           row.set(i, null);
         }
       }
+
+      deserializedDataSize = rowText.getBytes().length;
+      lastOperationSerialize = false;
       
       return row;
     } catch (final Exception e) {
@@ -147,6 +161,16 @@ public final class CSVSerde implements SerDe {
         }
       }
     }
+  }
+
+  @Override
+  public SerDeStats getSerDeStats() {
+    if (lastOperationSerialize) {
+      stats.setRawDataSize(serializedDataSize);
+    } else {
+      stats.setRawDataSize(deserializedDataSize);
+    }
+    return stats;
   }
   
   private CSVReader newReader(final Reader reader, char separator, char quote, char escape) {
